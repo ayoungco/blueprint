@@ -1,0 +1,41 @@
+stages:
+  - dispatch
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - when: never
+
+variables:
+  GIT_DEPTH: "1"
+
+dispatch:application-template:
+  stage: dispatch
+  trigger:
+    include: ci/components/application-template.yml
+  allow_failure: true
+  rules:
+    - if: '$APP == "application-template" || $APP == "all"'
+    - if: '$CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - apps/**/*
+        - ci/components/application-template.yml
+        - ci/templates/ansible-deploy.yml
+        - ci/templates/ssh-deploy.yml
+        - ci/templates/mattermost-notify.yml
+    - when: never
+
+dispatch:infra-template:
+  stage: dispatch
+  trigger:
+    include: ci/components/infra-template.yml
+  allow_failure: true
+  rules:
+    - if: '$APP == "infra-template" || $APP == "infrastructure" || $APP == "all"'
+    - if: '$CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - infra/**/*
+        - ci/components/infra-template.yml
+        - ci/templates/ansible-base.yml
+    - when: never

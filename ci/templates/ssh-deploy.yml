@@ -1,0 +1,81 @@
+# SSH + rsync deployment template.
+# No Python required on the remote host — suitable for ancient targets
+# (CentOS 5, Python 2-only systems) where Ansible modules cannot execute.
+#
+# Variables (set in component):
+#   DEPLOY_SSH_KEY          (required) Private key contents
+#   TARGET                  (required) user@host:/absolute/path
+#   DEPLOY_SRC              (required) Source dir, relative to repo root or absolute
+#   DEPLOY_DELETE           (optional) Set "true" to pass --delete to rsync. Default: false
+#   DEPLOY_SSH_EXTRA_OPTS   (optional) Extra SSH -o options, e.g. legacy kex algorithms
+
+.ssh_deploy_base:
+  image: alpine:latest
+  tags: [deploy]
+  before_script:
+    - apk add --no-cache openssh-client rsync
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - test -n "${DEPLOY_SSH_KEY:-}" || { echo "DEPLOY_SSH_KEY is required"; exit 1; }
+    - printf '%s\n' "$DEPLOY_SSH_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+
+.ssh_sync_deploy:
+  extends: .ssh_deploy_base
+  script:
+    - |
+      set -eu
+
+      # --- Validate ---
+      test -n "${TARGET:-}"      || { echo "TARGET is required";      exit 1; }
+      test -n "${DEPLOY_SRC:-}"  || { echo "DEPLOY_SRC is required";  exit 1; }
+      case "$TARGET" in
+        *@*:*) ;;
+        *) echo "TARGET must be in the form user@host:/absolute/path"; exit 1 ;;
+      esac
+
+      # --- Parse TARGET ---
+      TARGET_USER_HOST="${TARGET%%:*}"
+      TARGET_USER="${TARGET_USER_HOST%%@*}"
+      TARGET_HOST="${TARGET_USER_HOST#*@}"
+      TARGET_PATH="${TARGET#*:}"
+      case "$TARGET_PATH" in
+        /*) ;;
+        *) echo "TARGET path must be absolute (got: $TARGET_PATH)"; exit 1 ;;
+      esac
+
+      # --- Resolve source path ---
+      DEPLOY_SRC_PATH="${DEPLOY_SRC}"
+      if [ "${DEPLOY_SRC_PATH#/}" = "$DEPLOY_SRC_PATH" ]; then
+        DEPLOY_SRC_PATH="${CI_PROJECT_DIR}/${DEPLOY_SRC_PATH}"
+      fi
+      test -e "$DEPLOY_SRC_PATH" || { echo "DEPLOY_SRC not found: $DEPLOY_SRC_PATH"; exit 1; }
+      echo "Source: $DEPLOY_SRC_PATH"
+      ls -ld "$DEPLOY_SRC_PATH"
+
+      # --- Build SSH options ---
+      SSH_OPTS="-i $HOME/.ssh/id_rsa -o StrictHostKeyChecking=no -o PasswordAuthentication=no -o BatchMode=yes -o ConnectTimeout=10"
+      if [ -n "${DEPLOY_SSH_EXTRA_OPTS:-}" ]; then
+        SSH_OPTS="$SSH_OPTS $DEPLOY_SSH_EXTRA_OPTS"
+      fi
+
+      # --- Preflight ---
+      echo "Preflight: ${TARGET_USER}@${TARGET_HOST}"
+      ssh $SSH_OPTS "${TARGET_USER}@${TARGET_HOST}" 'echo sdi_ci_ssh_ok'
+
+      # --- Ensure remote path exists ---
+      ssh $SSH_OPTS "${TARGET_USER}@${TARGET_HOST}" "mkdir -p '${TARGET_PATH}'"
+
+      # --- Sync ---
+      DELETE_FLAG=""
+      if [ "${DEPLOY_DELETE:-false}" = "true" ]; then
+        DELETE_FLAG="--delete"
+      fi
+      echo "Syncing -> ${TARGET_USER}@${TARGET_HOST}:${TARGET_PATH}"
+      rsync -az $DELETE_FLAG \
+        --no-perms --no-times --no-owner --no-group \
+        -e "ssh $SSH_OPTS" \
+        "$DEPLOY_SRC_PATH" \
+        "${TARGET_USER}@${TARGET_HOST}:${TARGET_PATH}"
+
+      echo "Done."

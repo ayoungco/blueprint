@@ -1,0 +1,7 @@
+---
+- name: SDI template infrastructure validation play
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Confirm Ansible connectivity
+      ansible.builtin.ping:

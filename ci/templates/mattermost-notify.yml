@@ -1,0 +1,132 @@
+# Mattermost CI notification template
+# Sends pipeline status notifications to Mattermost webhook
+
+variables:
+  MATTERMOST_CHANNEL: "ci-notifications"
+
+.mattermost_notify:
+  image: alpine:3.20
+  tags: [deploy]
+  variables:
+    GIT_STRATEGY: none
+  before_script:
+    - apk add --no-cache curl jq
+  script:
+    - |
+      # Determine status color and emoji
+      case "${CI_JOB_STATUS:-unknown}" in
+        success)
+          COLOR="#36a64f"
+          EMOJI=":white_check_mark:"
+          STATUS_TEXT="succeeded"
+          ;;
+        failed)
+          COLOR="#dc3545"
+          EMOJI=":x:"
+          STATUS_TEXT="failed"
+          ;;
+        canceled)
+          COLOR="#6c757d"
+          EMOJI=":no_entry:"
+          STATUS_TEXT="was canceled"
+          ;;
+        *)
+          COLOR="#ffc107"
+          EMOJI=":warning:"
+          STATUS_TEXT="status unknown"
+          ;;
+      esac
+    - |
+      # Build notification payload
+      PAYLOAD=$(jq -n \
+        --arg channel "${MATTERMOST_CHANNEL}" \
+        --arg username "GitLab CI" \
+        --arg icon_url "https://about.gitlab.com/images/press/logo/png/gitlab-icon-rgb.png" \
+        --arg text "${EMOJI} Pipeline ${STATUS_TEXT}" \
+        --arg color "${COLOR}" \
+        --arg project "${CI_PROJECT_NAME}" \
+        --arg branch "${CI_COMMIT_REF_NAME}" \
+        --arg pipeline_url "${CI_PIPELINE_URL}" \
+        --arg commit_msg "${CI_COMMIT_TITLE}" \
+        --arg author "${GITLAB_USER_NAME:-${CI_COMMIT_AUTHOR}}" \
+        '{
+          channel: $channel,
+          username: $username,
+          icon_url: $icon_url,
+          attachments: [{
+            color: $color,
+            title: "\($project) - \($branch)",
+            title_link: $pipeline_url,
+            fields: [
+              { short: true, title: "Status", value: $text },
+              { short: true, title: "Author", value: $author },
+              { short: false, title: "Commit", value: $commit_msg }
+            ]
+          }]
+        }')
+    - |
+      # Send to Mattermost
+      if [ -z "${MATTERMOST_WEBHOOK_URL:-}" ]; then
+        echo "MATTERMOST_WEBHOOK_URL not set, skipping notification"
+        exit 0
+      fi
+      curl -sS -X POST \
+        -H "Content-Type: application/json" \
+        -d "$PAYLOAD" \
+        "$MATTERMOST_WEBHOOK_URL"
+      echo "Notification sent to Mattermost"
+
+# Success notification - runs on successful pipelines
+.notify_success:
+  extends: .mattermost_notify
+  variables:
+    CI_JOB_STATUS: "success"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: on_success
+
+# Failure notification - runs on failed pipelines
+.notify_failure:
+  extends: .mattermost_notify
+  variables:
+    CI_JOB_STATUS: "failed"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: on_failure
+
+# Deploy notification - manual trigger after deploy
+.notify_deploy:
+  extends: .mattermost_notify
+  script:
+    - |
+      PAYLOAD=$(jq -n \
+        --arg channel "${MATTERMOST_CHANNEL}" \
+        --arg username "GitLab CI" \
+        --arg icon_url "https://about.gitlab.com/images/press/logo/png/gitlab-icon-rgb.png" \
+        --arg project "${CI_PROJECT_NAME}" \
+        --arg env "${CI_ENVIRONMENT_NAME:-production}" \
+        --arg pipeline_url "${CI_PIPELINE_URL}" \
+        --arg author "${GITLAB_USER_NAME:-${CI_COMMIT_AUTHOR}}" \
+        '{
+          channel: $channel,
+          username: $username,
+          icon_url: $icon_url,
+          attachments: [{
+            color: "#17a2b8",
+            title: ":rocket: Deployed \($project) to \($env)",
+            title_link: $pipeline_url,
+            fields: [
+              { short: true, title: "Environment", value: $env },
+              { short: true, title: "Deployed by", value: $author }
+            ]
+          }]
+        }')
+    - |
+      if [ -z "${MATTERMOST_WEBHOOK_URL:-}" ]; then
+        echo "MATTERMOST_WEBHOOK_URL not set, skipping notification"
+        exit 0
+      fi
+      curl -sS -X POST \
+        -H "Content-Type: application/json" \
+        -d "$PAYLOAD" \
+        "$MATTERMOST_WEBHOOK_URL"

@@ -1,0 +1,20 @@
+include:
+  - local: ci/templates/ansible-base.yml
+
+stages:
+  - validate
+  - connect
+
+variables:
+  PLAYBOOKS: "infra/ansible/playbooks/site.yml"
+  LINT_PATHS: "infra/ansible/playbooks infra/ansible/roles"
+  TARGET_HOSTS: "all"
+
+infra_validate:
+  extends: .ansible_validate
+
+infra_lint:
+  extends: .ansible_lint
+
+infra_connect:
+  extends: .ansible_connect

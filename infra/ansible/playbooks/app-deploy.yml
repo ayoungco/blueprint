@@ -1,0 +1,58 @@
+---
+- name: SDI template application deploy play
+  hosts: all
+  gather_facts: false
+  vars:
+    deploy_mode: "sync"
+    deploy_src: ""
+    deploy_archive_src: ""
+    deploy_path: ""
+    deploy_delete: false
+    deploy_post_commands: []
+  tasks:
+    - name: Validate deploy path
+      ansible.builtin.assert:
+        that:
+          - deploy_path | length > 0
+          - deploy_path.startswith('/')
+        fail_msg: deploy_path must be an absolute path.
+
+    - name: Ensure deploy path exists
+      ansible.builtin.file:
+        path: "{{ deploy_path }}"
+        state: directory
+        mode: "0755"
+
+    - name: Sync local build output to remote destination
+      ansible.posix.synchronize:
+        src: "{{ deploy_src }}/"
+        dest: "{{ deploy_path }}/"
+        delete: "{{ deploy_delete | bool }}"
+      when: deploy_mode == "sync"
+
+    - name: Upload archive for archive-mode deploys
+      ansible.builtin.copy:
+        src: "{{ deploy_archive_src }}"
+        dest: "/tmp/sdi-app-deploy.tar.gz"
+        mode: "0644"
+      when: deploy_mode == "archive"
+
+    - name: Extract archive in destination path
+      ansible.builtin.unarchive:
+        src: "/tmp/sdi-app-deploy.tar.gz"
+        dest: "{{ deploy_path }}"
+        remote_src: true
+      when: deploy_mode == "archive"
+
+    - name: Remove temporary uploaded archive
+      ansible.builtin.file:
+        path: "/tmp/sdi-app-deploy.tar.gz"
+        state: absent
+      when: deploy_mode == "archive"
+
+    - name: Run optional post-deploy commands
+      ansible.builtin.shell: "{{ item }}"
+      args:
+        chdir: "{{ deploy_path }}"
+      loop: "{{ deploy_post_commands }}"
+      when: deploy_post_commands | length > 0

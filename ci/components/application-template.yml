@@ -1,0 +1,80 @@
+include:
+  - local: ci/templates/ansible-deploy.yml
+  - local: ci/templates/mattermost-notify.yml
+
+stages:
+  - build
+  - prepare
+  - deploy
+
+application_build:
+  stage: build
+  image: alpine:3.20
+  tags: [deploy]
+  script:
+    - set -euo pipefail
+    - mkdir -p .deploy/application
+    - |
+      if [ -d apps/application ]; then
+        cp -a apps/application/. .deploy/application/
+      else
+        printf 'Template artifact generated on %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > .deploy/application/README.txt
+      fi
+  artifacts:
+    paths:
+      - .deploy/application/
+    expire_in: 1 week
+
+application_prepare:
+  stage: prepare
+  extends: .ansible_sync_deploy
+  tags: [deploy]
+  variables:
+    TARGET: "${TARGET_PREPARE:-deploy@preview.example.internal:/var/www/sdi-application-preview}"
+    DEPLOY_SRC: ".deploy/application/"
+    DEPLOY_SSH_KEY: "$DEPLOY_SSH_KEY"
+    DEPLOY_DELETE: "true"
+  needs:
+    - job: application_build
+      artifacts: true
+  environment:
+    name: preview
+  rules:
+    - if: '$ENABLE_DEPLOY == "true"'
+      when: on_success
+    - when: manual
+
+application_deploy:
+  stage: deploy
+  extends: .ansible_sync_deploy
+  tags: [deploy]
+  variables:
+    TARGET: "${TARGET_PRODUCTION:-deploy@prod.example.internal:/var/www/sdi-application}"
+    DEPLOY_SRC: ".deploy/application/"
+    DEPLOY_SSH_KEY: "$DEPLOY_SSH_KEY"
+    DEPLOY_DELETE: "true"
+  needs:
+    - job: application_build
+      artifacts: true
+  environment:
+    name: production
+  rules:
+    - when: manual
+
+application_notify_success:
+  stage: deploy
+  extends: .notify_success
+  variables:
+    MATTERMOST_CHANNEL: "ci-notifications"
+  rules:
+    - if: '$MATTERMOST_WEBHOOK_URL'
+      when: on_success
+
+application_notify_failure:
+  stage: deploy
+  extends: .notify_failure
+  variables:
+    MATTERMOST_CHANNEL: "ci-notifications"
+  rules:
+    - if: '$MATTERMOST_WEBHOOK_URL'
+      when: on_failure

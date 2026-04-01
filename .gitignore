@@ -1,0 +1,13 @@
+.DS_Store
+*,v
+*.log
+*.core
+core.*
+*.db
+*/logs/*
+*/log/*
+*.psd
+.ansible/*
+.env
+.claude
+.ansible

@@ -1,0 +1,129 @@
+# Shared Ansible deploy templates for CI components.
+# Prioritize reliability and explicit validation over hidden defaults.
+
+.ansible_deploy_base:
+  image: alpine/ansible:2.20.0
+  tags: [deploy]
+  cache:
+    key:
+      files:
+        - infra/ansible/requirements.yml
+    paths:
+      - .ansible/collections/
+    policy: pull-push
+  variables:
+    ANSIBLE_CONFIG: infra/ansible/ansible.cfg
+    ANSIBLE_INVENTORY: infra/ansible/inventories/production/hosts.yml
+    ANSIBLE_COLLECTIONS_REQUIREMENTS: infra/ansible/requirements.yml
+    ANSIBLE_COLLECTIONS_PATH: "$CI_PROJECT_DIR/.ansible/collections:/root/.ansible/collections:/usr/share/ansible/collections"
+    ANSIBLE_HOST_KEY_CHECKING: "False"
+    ANSIBLE_FORKS: "1"   # while stabilizing dead worker issue
+  before_script:
+    - apk add --no-cache openssh-client rsync bash
+    - ansible --version
+    - COLLECTIONS_DIR="$CI_PROJECT_DIR/.ansible/collections"
+    - mkdir -p "$COLLECTIONS_DIR"
+    - |
+      if [ -f "$ANSIBLE_COLLECTIONS_REQUIREMENTS" ]; then
+        COLLECTIONS_HASH="$(sha256sum "$ANSIBLE_COLLECTIONS_REQUIREMENTS" | awk '{print $1}')"
+        COLLECTIONS_STAMP="$COLLECTIONS_DIR/.requirements_sha256"
+        if [ ! -f "$COLLECTIONS_STAMP" ] || [ "$(cat "$COLLECTIONS_STAMP")" != "$COLLECTIONS_HASH" ]; then
+          ansible-galaxy collection install -r "$ANSIBLE_COLLECTIONS_REQUIREMENTS" -p "$COLLECTIONS_DIR"
+          echo "$COLLECTIONS_HASH" > "$COLLECTIONS_STAMP"
+        else
+          echo "Using cached Ansible collections from $COLLECTIONS_DIR"
+        fi
+      fi
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - test -n "${DEPLOY_SSH_KEY:-}" || { echo "DEPLOY_SSH_KEY is required"; exit 1; }
+    - printf '%s\n' "$DEPLOY_SSH_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+
+.ansible_deploy:
+  extends: .ansible_deploy_base
+  script:
+    - set -euo pipefail
+    - test -n "${TARGET:-}" || { echo "TARGET is required"; exit 1; }
+    - test -n "${DEPLOY_MODE:-}" || { echo "DEPLOY_MODE is required"; exit 1; }
+    - case "$DEPLOY_MODE" in sync|archive) ;; *) echo "DEPLOY_MODE must be sync or archive"; exit 1 ;; esac
+    - case "$TARGET" in *@*:* ) ;; * ) echo "TARGET must be user@host:/absolute/path"; exit 1 ;; esac
+    - TARGET_USER_HOST="${TARGET%%:*}"
+    - TARGET_USER="${TARGET_USER_HOST%%@*}"
+    - TARGET_HOST="${TARGET_USER_HOST#*@}"
+    - TARGET_PATH="${TARGET#*:}"
+    - test -n "$TARGET_USER" || { echo "Failed to parse TARGET_USER from TARGET"; exit 1; }
+    - test -n "$TARGET_HOST" || { echo "Failed to parse TARGET_HOST from TARGET"; exit 1; }
+    - test -n "$TARGET_PATH" || { echo "Failed to parse TARGET_PATH from TARGET"; exit 1; }
+    - case "$TARGET_PATH" in /*) ;; *) echo "TARGET path must be absolute"; exit 1 ;; esac
+    - DEPLOY_SRC_PATH="${DEPLOY_SRC:-}"
+    - DEPLOY_ARCHIVE_SRC_PATH="${DEPLOY_ARCHIVE_SRC:-}"
+    - |
+      if [ -n "$DEPLOY_SRC_PATH" ] && [ "${DEPLOY_SRC_PATH#/}" = "$DEPLOY_SRC_PATH" ]; then
+        DEPLOY_SRC_PATH="$CI_PROJECT_DIR/$DEPLOY_SRC_PATH"
+      fi
+    - |
+      if [ -n "$DEPLOY_ARCHIVE_SRC_PATH" ] && [ "${DEPLOY_ARCHIVE_SRC_PATH#/}" = "$DEPLOY_ARCHIVE_SRC_PATH" ]; then
+        DEPLOY_ARCHIVE_SRC_PATH="$CI_PROJECT_DIR/$DEPLOY_ARCHIVE_SRC_PATH"
+      fi
+    - |
+      case "$DEPLOY_MODE" in
+        sync)
+          test -e "$DEPLOY_SRC_PATH" || { echo "Resolved DEPLOY_SRC not found: $DEPLOY_SRC_PATH"; exit 1; }
+          echo "Resolved DEPLOY_SRC: $DEPLOY_SRC_PATH"
+          ls -ld "$DEPLOY_SRC_PATH"
+          ;;
+        archive)
+          test -f "$DEPLOY_ARCHIVE_SRC_PATH" || { echo "Resolved DEPLOY_ARCHIVE_SRC not found: $DEPLOY_ARCHIVE_SRC_PATH"; exit 1; }
+          echo "Resolved DEPLOY_ARCHIVE_SRC: $DEPLOY_ARCHIVE_SRC_PATH"
+          ls -l "$DEPLOY_ARCHIVE_SRC_PATH"
+          ;;
+      esac
+    - |
+      if [ -n "${DEPLOY_SSH_COMMON_ARGS:-}" ]; then
+        export ANSIBLE_SSH_COMMON_ARGS="$DEPLOY_SSH_COMMON_ARGS"
+      else
+        unset ANSIBLE_SSH_COMMON_ARGS
+      fi
+    - |
+      echo "Preflight: SSH transport and Python runtime on ${TARGET_USER}@${TARGET_HOST}"
+      ansible "$TARGET_HOST" -vvv \
+        -i "$ANSIBLE_INVENTORY" \
+        --limit "$TARGET_HOST" \
+        -m raw \
+        -a "echo sdi_ci_ssh_ok && (python3 -c 'import sys; print(sys.version)' 2>/dev/null || python -c 'import sys; print(sys.version)')" \
+        -e "ansible_user=${TARGET_USER}" \
+        -e "ansible_become=false" \
+        -e "ansible_ssh_private_key_file=$HOME/.ssh/id_rsa"
+    - |
+      ansible-playbook -vvv \
+        -i "$ANSIBLE_INVENTORY" \
+        --limit "$TARGET_HOST" \
+        infra/ansible/playbooks/app-deploy.yml \
+        -e "ansible_user=${TARGET_USER}" \
+        -e "ansible_become=false" \
+        -e "ansible_ssh_private_key_file=$HOME/.ssh/id_rsa" \
+        -e "ansible_python_interpreter=${DEPLOY_PYTHON_INTERPRETER:-auto}" \
+        -e "deploy_mode=${DEPLOY_MODE}" \
+        -e "deploy_src=${DEPLOY_SRC_PATH:-}" \
+        -e "deploy_archive_src=${DEPLOY_ARCHIVE_SRC_PATH:-}" \
+        -e "deploy_path=${TARGET_PATH}" \
+        -e "deploy_delete=${DEPLOY_DELETE:-false}" \
+        -e "deploy_rsync_ssh_opts=${DEPLOY_RSYNC_SSH_OPTS:-}" \
+        -e "{\"deploy_post_commands\": ${DEPLOY_POST_COMMANDS_JSON:-[]}}"
+
+.ansible_sync_deploy:
+  extends: .ansible_deploy
+  variables:
+    DEPLOY_MODE: sync
+  before_script:
+    - !reference [.ansible_deploy_base, before_script]
+    - test -n "${DEPLOY_SRC:-}" || { echo "DEPLOY_SRC is required"; exit 1; }
+
+.ansible_archive_deploy:
+  extends: .ansible_deploy
+  variables:
+    DEPLOY_MODE: archive
+  before_script:
+    - !reference [.ansible_deploy_base, before_script]
+    - test -n "${DEPLOY_ARCHIVE_SRC:-}" || { echo "DEPLOY_ARCHIVE_SRC is required"; exit 1; }
