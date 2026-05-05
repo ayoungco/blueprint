@@ -1,0 +1,22 @@
+# Managed by Ansible — do not edit by hand
+[Interface]
+PrivateKey = {{ wg_private_key }}
+Address = {{ wg_address }}
+ListenPort = {{ wg_listen_port }}
+
+{% for peer in wg_peers %}
+[Peer]
+# {{ peer.name }}
+PublicKey = {{ peer.public_key }}
+{% if peer.preshared_key is defined %}
+PresharedKey = {{ peer.preshared_key }}
+{% endif %}
+AllowedIPs = {{ peer.allowed_ips }}
+{% if peer.endpoint is defined %}
+Endpoint = {{ peer.endpoint }}
+{% endif %}
+{% if peer.persistent_keepalive is defined %}
+PersistentKeepalive = {{ peer.persistent_keepalive }}
+{% endif %}
+
+{% endfor %}

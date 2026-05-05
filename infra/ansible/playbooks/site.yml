@@ -1,7 +1,9 @@
 ---
-- name: SDI template infrastructure validation play
+- name: Confirm Ansible connectivity to all hosts
   hosts: all
   gather_facts: false
   tasks:
-    - name: Confirm Ansible connectivity
+    - name: Ping
       ansible.builtin.ping:
+
+- import_playbook: wireguard.yml

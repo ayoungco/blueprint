@@ -1,0 +1,16 @@
+---
+wg_interface: wg0
+wg_listen_port: 51820
+wg_address: "10.0.0.1/24"
+
+# Set these via CI/CD secrets or group_vars (never commit key material)
+wg_private_key: "{{ wireguard_private_key }}"
+
+wg_peers: []
+# Each peer:
+#   name: peer-name
+#   public_key: <base64>
+#   preshared_key: <base64>   # optional
+#   allowed_ips: "10.0.0.2/32"
+#   endpoint: "203.0.113.1:51820"  # optional
+#   persistent_keepalive: 25        # optional

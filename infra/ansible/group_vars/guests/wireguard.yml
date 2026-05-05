@@ -1,0 +1,14 @@
+---
+# WireGuard configuration for rocky-wg
+# wireguard_private_key: injected from CI/CD secret — never commit key material here
+
+wg_interface: wg0
+wg_listen_port: 51820
+wg_address: "10.0.0.1/24"
+
+wg_peers: []
+# Example peer entry:
+# - name: laptop
+#   public_key: "<base64>"
+#   allowed_ips: "10.0.0.2/32"
+#   persistent_keepalive: 25

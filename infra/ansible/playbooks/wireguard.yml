@@ -1,0 +1,6 @@
+---
+- name: Configure WireGuard on Rocky Linux guest VMs
+  hosts: guests
+  gather_facts: false
+  roles:
+    - wireguard
