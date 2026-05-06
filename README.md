@@ -6,24 +6,29 @@ Customer infrastructure repository, forked from [ayoungco/blueprint](https://git
 
 | Role | Host | OS |
 |---|---|---|
-| Hypervisor | `fedora-host` | Fedora Server |
-| WireGuard gateway | `rocky-wg` | Rocky Linux (minimal) |
+| Hypervisor / WireGuard gateway | `big0` | Fedora Server |
+| Kubernetes control plane | `k8s-control-01` | VM |
+| Kubernetes worker | `k8s-worker-01` | VM |
+| Bastion / fileserver | `bastion-01` | Fedora VM with GUI |
+| Edge node | `littlehamster` | Raspberry Pi 5 |
 
 ## WireGuard
 
-The `wireguard` Ansible role (`infra/ansible/roles/wireguard/`) configures the `wg0` interface on `rocky-wg`.
+The `wireguard` Ansible role (`infra/ansible/roles/wireguard/`) configures the `wg0` interface on the Fedora hypervisor host.
 
 **Required CI/CD secrets**
 
 | Variable | Description |
 |---|---|
 | `fedora_host_ip` | IP or hostname of the Fedora server |
-| `rocky_guest_ip` | IP or hostname of the Rocky Linux guest VM |
+| `k8s_control_01_ip` | IP or hostname of the Kubernetes control-plane VM |
+| `k8s_worker_01_ip` | IP or hostname of the Kubernetes worker VM |
+| `bastion_01_ip` | IP or hostname of the Fedora bastion/fileserver VM |
 | `ansible_deploy_user` | SSH user on target hosts (default: `admin`) |
 | `DEPLOY_SSH_KEY` | SSH private key for Ansible |
-| `wireguard_private_key` | WireGuard private key for `rocky-wg` |
+| `wireguard_private_key` | WireGuard private key for `big0` |
 
-Peer configuration lives in `group_vars/guests/wireguard.yml` (gitignored — store in CI/CD secrets or a vault).
+Peer configuration lives in `group_vars/hypervisors/wireguard.yml` (store sensitive values in CI/CD secrets or a vault).
 
 ## Keeping up with blueprint
 

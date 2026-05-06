@@ -1,0 +1,1 @@
+- Read the docs and understand the goals

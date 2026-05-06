@@ -1,6 +1,6 @@
 ---
-- name: Configure WireGuard on Rocky Linux guest VMs
-  hosts: guests
+- name: Configure WireGuard on Fedora hypervisor hosts
+  hosts: hypervisors
   gather_facts: false
   roles:
     - wireguard

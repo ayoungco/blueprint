@@ -1,6 +1,6 @@
 ---
-# WireGuard configuration for rocky-wg
-# wireguard_private_key: injected from CI/CD secret — never commit key material here
+# WireGuard configuration for Fedora hypervisor hosts.
+# wireguard_private_key is injected from CI/CD secrets or Ansible Vault.
 
 wg_interface: wg0
 wg_listen_port: 51820
