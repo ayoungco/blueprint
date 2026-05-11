@@ -1,0 +1,80 @@
+name: Deploy Ansible
+
+on:
+  workflow_dispatch:
+    inputs:
+      check_mode:
+        description: Run Ansible in check mode without applying changes
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  group: production-ansible
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy production configuration
+    runs-on: ubuntu-latest
+    environment: production
+
+    env:
+      ANSIBLE_CONFIG: infra/ansible/ansible.cfg
+      ANSIBLE_HOST_KEY_CHECKING: "False"
+      ANSIBLE_STDOUT_CALLBACK: yaml
+      FEDORA_HOST_IP: ${{ secrets.FEDORA_HOST_IP }}
+      K8S_CONTROL_01_IP: ${{ secrets.K8S_CONTROL_01_IP }}
+      K8S_WORKER_01_IP: ${{ secrets.K8S_WORKER_01_IP }}
+      BASTION_01_IP: ${{ secrets.BASTION_01_IP }}
+      ANSIBLE_DEPLOY_USER: ${{ secrets.ANSIBLE_DEPLOY_USER }}
+      WIREGUARD_PRIVATE_KEY: ${{ secrets.WIREGUARD_PRIVATE_KEY }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Ansible
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ansible
+          ansible-galaxy collection install -r infra/ansible/requirements.yml
+
+      - name: Configure SSH key
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "ANSIBLE_PRIVATE_KEY_FILE=$HOME/.ssh/deploy_key" >> "$GITHUB_ENV"
+
+      - name: Build Ansible variable file
+        run: |
+          cat > "$RUNNER_TEMP/production-vars.yml" <<EOF
+          fedora_host_ip: "$FEDORA_HOST_IP"
+          k8s_control_01_ip: "$K8S_CONTROL_01_IP"
+          k8s_worker_01_ip: "$K8S_WORKER_01_IP"
+          bastion_01_ip: "$BASTION_01_IP"
+          ansible_deploy_user: "${ANSIBLE_DEPLOY_USER:-admin}"
+          wireguard_private_key: "$WIREGUARD_PRIVATE_KEY"
+          EOF
+
+      - name: Validate inventory
+        run: ansible-inventory --list --extra-vars "@$RUNNER_TEMP/production-vars.yml"
+
+      - name: Syntax check production playbook
+        run: ansible-playbook infra/ansible/playbooks/site.yml --syntax-check --extra-vars "@$RUNNER_TEMP/production-vars.yml"
+
+      - name: Deploy production playbook
+        run: |
+          args=()
+          if [[ "${{ inputs.check_mode }}" == "true" ]]; then
+            args+=(--check --diff)
+          fi
+
+          ansible-playbook infra/ansible/playbooks/site.yml \
+            --extra-vars "@$RUNNER_TEMP/production-vars.yml" \
+            "${args[@]}"
